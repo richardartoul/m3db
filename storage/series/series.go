@@ -115,6 +115,30 @@ func (s *dbSeries) ID() ts.ID {
 func (s *dbSeries) Tick() (TickResult, error) {
 	var r TickResult
 
+	s.RLock()
+
+	var needsDrain, needsWriteLock bool
+	needsDrain = s.buffer.NeedsDrain()
+
+	if needsDrain {
+		needsWriteLock = true
+	} else {
+		update, result := s.updateBlocksWithLock(readLock)
+		if result != satisfied {
+			needsWriteLock = true
+		} else {
+			r.TickStatus = update.TickStatus
+			r.MadeExpiredBlocks, r.MadeUnwiredBlocks =
+				update.madeExpiredBlocks, update.madeUnwiredBlocks
+		}
+	}
+
+	s.RUnlock()
+
+	if !needsWriteLock {
+		return s.tickResult(r)
+	}
+
 	s.Lock()
 
 	// NB(r): don't bother to check if needs drain or needs
@@ -124,14 +148,18 @@ func (s *dbSeries) Tick() (TickResult, error) {
 	drain := s.buffer.DrainAndReset()
 	r.MergedOutOfOrderBlocks = drain.mergedOutOfOrderBlocks
 
-	update := s.updateBlocksWithLock()
+	update, _ := s.updateBlocksWithLock(writeLock)
 	r.TickStatus = update.TickStatus
 	r.MadeExpiredBlocks, r.MadeUnwiredBlocks =
 		update.madeExpiredBlocks, update.madeUnwiredBlocks
 
 	s.Unlock()
 
-	if update.ActiveBlocks == 0 {
+	return s.tickResult(r)
+}
+
+func (s *dbSeries) tickResult(r TickResult) (TickResult, error) {
+	if r.ActiveBlocks == 0 {
 		return r, ErrSeriesAllDatapointsExpired
 	}
 	return r, nil
@@ -143,7 +171,23 @@ type updateBlocksResult struct {
 	madeUnwiredBlocks int
 }
 
-func (s *dbSeries) updateBlocksWithLock() updateBlocksResult {
+type lockType uint
+
+const (
+	writeLock lockType = iota
+	readLock
+)
+
+type lockOpResultType uint
+
+const (
+	unsatisfied lockOpResultType = iota
+	satisfied
+)
+
+func (s *dbSeries) updateBlocksWithLock(
+	lock lockType,
+) (updateBlocksResult, lockOpResultType) {
 	var (
 		result       updateBlocksResult
 		now          = s.opts.ClockOptions().NowFn()()
@@ -155,6 +199,11 @@ func (s *dbSeries) updateBlocksWithLock() updateBlocksResult {
 	)
 	for start, currBlock := range s.blocks.AllBlocks() {
 		if start.Before(expireCutoff) {
+			if lock == readLock {
+				// Need write lock, bail unsatisfied
+				return result, unsatisfied
+			}
+
 			s.blocks.RemoveBlockAt(start)
 			currBlock.Close()
 			result.madeExpiredBlocks++
@@ -173,6 +222,11 @@ func (s *dbSeries) updateBlocksWithLock() updateBlocksResult {
 			sinceLastAccessed := now.Sub(currBlock.LastAccessTime())
 			if sinceLastAccessed >= wiredTimeout &&
 				retriever.IsBlockRetrievable(start) {
+				if lock == readLock {
+					// Need write lock, bail unsatisfied
+					return result, unsatisfied
+				}
+
 				// NB(r): Each block needs shared ref to the series ID
 				// or else each block needs to have a copy of the ID
 				id := s.id
@@ -199,7 +253,7 @@ func (s *dbSeries) updateBlocksWithLock() updateBlocksResult {
 	result.WiredBlocks += bufferStats.wiredBlocks
 	result.OpenBlocks += bufferStats.openBlocks
 
-	return result
+	return result, satisfied
 }
 
 func (s *dbSeries) IsEmpty() bool {
