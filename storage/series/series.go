@@ -74,6 +74,11 @@ type dbSeries struct {
 	pool           DatabaseSeriesPool
 }
 
+type updateBlocksResult struct {
+	expired          int
+	resetRetrievable int
+}
+
 // NewDatabaseSeries creates a new database series
 func NewDatabaseSeries(id ts.ID, opts Options) DatabaseSeries {
 	return newDatabaseSeries(id, opts)
@@ -114,64 +119,125 @@ func (s *dbSeries) ID() ts.ID {
 
 func (s *dbSeries) Tick() (TickResult, error) {
 	var r TickResult
+	if s.IsEmpty() {
+		return r, ErrSeriesAllDatapointsExpired
+	}
+
+	// In best case when explicitly asked to drain may have no
+	// stale buckets, cheaply check this case first with a Rlock
+	s.RLock()
+
+	needsDrain := s.buffer.NeedsDrain()
+	needsBlockUpdate := s.needsBlockUpdateWithLock()
+	r.ActiveBlocks = s.blocks.Len()
+
+	s.RUnlock()
+
+	if !needsDrain && !needsBlockUpdate {
+		return r, nil
+	}
 
 	s.Lock()
 
 	// NB(r): don't bother to check if needs drain or needs
-	// block update as running both these checks
+	// block update still holds as running both these checks
 	// are relatively expensive and running these methods
-	// will be a no-op in case where work is not needed to be done.
-	drain := s.buffer.DrainAndReset()
-	r.MergedOutOfOrderBlocks = drain.mergedOutOfOrderBlocks
+	// will be a no-op in case conditions no longer hold.
+	if needsDrain {
+		s.buffer.DrainAndReset()
+	}
 
-	update := s.updateBlocksWithLock()
-	r.TickStatus = update.TickStatus
-	r.MadeExpiredBlocks, r.MadeUnwiredBlocks =
-		update.madeExpiredBlocks, update.madeUnwiredBlocks
+	if needsBlockUpdate {
+		updateResult := s.updateBlocksWithLock()
+		r.ExpiredBlocks = updateResult.expired
+		r.ResetRetrievableBlocks = updateResult.resetRetrievable
+	}
+
+	r.ActiveBlocks = s.blocks.Len()
 
 	s.Unlock()
 
-	if update.ActiveBlocks == 0 {
-		return r, ErrSeriesAllDatapointsExpired
-	}
 	return r, nil
 }
 
-type updateBlocksResult struct {
-	TickStatus
-	madeExpiredBlocks int
-	madeUnwiredBlocks int
+func (s *dbSeries) needsBlockUpdateWithLock() bool {
+	if s.blocks.Len() == 0 {
+		return false
+	}
+
+	now := s.opts.ClockOptions().NowFn()()
+	if s.shouldExpireAnyBlockData(now) {
+		return true
+	}
+
+	// If the earliest block is not within the retention period,
+	// we should expire the blocks.
+	minBlockStart := s.blocks.MinTime()
+	return s.shouldExpireBlockAt(now, minBlockStart)
+}
+
+func (s *dbSeries) shouldExpireAnyBlockData(now time.Time) bool {
+	retriever := s.blockRetriever
+	if retriever == nil {
+		return false
+	}
+
+	ropts := s.opts.RetentionOptions()
+	if !ropts.BlockDataExpiry() {
+		return false
+	}
+
+	cutoff := ropts.BlockDataExpiryAfterNotAccessedPeriod()
+	for start, block := range s.blocks.AllBlocks() {
+		if !block.IsRetrieved() {
+			continue
+		}
+		sinceLastAccessed := now.Sub(block.LastAccessTime())
+		if sinceLastAccessed >= cutoff &&
+			retriever.IsBlockRetrievable(start) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func (s *dbSeries) shouldExpireBlockAt(now, blockStart time.Time) bool {
+	var cutoff time.Time
+	rops := s.opts.RetentionOptions()
+	if rops.ShortExpiry() {
+		// Some blocks of series is stored in disk only
+		cutoff = now.Add(-rops.ShortExpiryPeriod() - rops.BlockSize()).Truncate(rops.BlockSize())
+	} else {
+		// Everything for the retention period is kept in mem
+		cutoff = now.Add(-rops.RetentionPeriod()).Truncate(rops.BlockSize())
+	}
+
+	return blockStart.Before(cutoff)
 }
 
 func (s *dbSeries) updateBlocksWithLock() updateBlocksResult {
 	var (
-		result       updateBlocksResult
-		now          = s.opts.ClockOptions().NowFn()()
-		ropts        = s.opts.RetentionOptions()
-		retriever    = s.blockRetriever
-		checkUnwire  = retriever != nil && ropts.BlockDataExpiry()
-		expireCutoff = now.Add(-ropts.RetentionPeriod()).Truncate(ropts.BlockSize())
-		wiredTimeout = ropts.BlockDataExpiryAfterNotAccessedPeriod()
+		r         updateBlocksResult
+		now       = s.opts.ClockOptions().NowFn()()
+		allBlocks = s.blocks.AllBlocks()
+
+		retriever       = s.blockRetriever
+		ropts           = s.opts.RetentionOptions()
+		dataExpiry      = ropts.BlockDataExpiry()
+		dataCutoff      = ropts.BlockDataExpiryAfterNotAccessedPeriod()
+		makeRetrievable = retriever != nil && dataExpiry
 	)
-	for start, currBlock := range s.blocks.AllBlocks() {
-		if start.Before(expireCutoff) {
+	for start, currBlock := range allBlocks {
+		if s.shouldExpireBlockAt(now, start) {
 			s.blocks.RemoveBlockAt(start)
 			currBlock.Close()
-			result.madeExpiredBlocks++
+			r.expired++
 			continue
 		}
-
-		result.ActiveBlocks++
-
-		if !currBlock.IsRetrieved() {
-			result.UnwiredBlocks++
-			continue
-		}
-
-		var unwired bool
-		if checkUnwire {
+		if makeRetrievable && currBlock.IsRetrieved() {
 			sinceLastAccessed := now.Sub(currBlock.LastAccessTime())
-			if sinceLastAccessed >= wiredTimeout &&
+			if sinceLastAccessed >= dataCutoff &&
 				retriever.IsBlockRetrievable(start) {
 				// NB(r): Each block needs shared ref to the series ID
 				// or else each block needs to have a copy of the ID
@@ -182,24 +248,11 @@ func (s *dbSeries) updateBlocksWithLock() updateBlocksResult {
 					Checksum: currBlock.Checksum(),
 				}
 				currBlock.ResetRetrievable(start, retriever, metadata)
-
-				unwired = true
-				result.madeUnwiredBlocks++
+				r.resetRetrievable++
 			}
 		}
-		if unwired {
-			result.UnwiredBlocks++
-		} else {
-			result.WiredBlocks++
-		}
 	}
-
-	bufferStats := s.buffer.Stats()
-	result.ActiveBlocks += bufferStats.wiredBlocks
-	result.WiredBlocks += bufferStats.wiredBlocks
-	result.OpenBlocks += bufferStats.openBlocks
-
-	return result
+	return r
 }
 
 func (s *dbSeries) IsEmpty() bool {

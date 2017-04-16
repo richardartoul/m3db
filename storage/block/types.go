@@ -30,7 +30,7 @@ import (
 	xio "github.com/m3db/m3db/x/io"
 	"github.com/m3db/m3x/clock"
 	"github.com/m3db/m3x/pool"
-	xsync "github.com/m3db/m3x/sync"
+	"github.com/m3db/m3x/sync"
 )
 
 // Metadata captures block metadata
