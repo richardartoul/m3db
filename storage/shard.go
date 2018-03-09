@@ -1527,6 +1527,7 @@ func (s *dbShard) Flush(
 		NsMetadata: s.namespace,
 		Shard:      s.ID(),
 		BlockStart: blockStart,
+		// IsSnapshot: true,
 	}
 	prepared, err := flush.Prepare(prepareOpts)
 	fmt.Println("f4")
@@ -1587,6 +1588,7 @@ func (s *dbShard) Snapshot(
 		NsMetadata: s.namespace,
 		Shard:      s.ID(),
 		BlockStart: snapshotStart,
+		IsSnapshot: true,
 	}
 	prepared, err := flush.Prepare(prepareOpts)
 	multiErr = multiErr.Add(err)
