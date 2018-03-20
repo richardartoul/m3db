@@ -1565,7 +1565,7 @@ func (s *dbShard) Snapshot(
 	s.RLock()
 	if s.bs != bootstrapped {
 		s.RUnlock()
-		return errShardNotBootstrappedToFlush
+		return errShardNotBootstrappedToSnapshot
 	}
 	s.RUnlock()
 
