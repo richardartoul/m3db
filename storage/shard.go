@@ -1522,7 +1522,6 @@ func (s *dbShard) Flush(
 	s.RLock()
 	if s.bs != bootstrapped {
 		s.RUnlock()
-		// TODO: Rename for snapshot
 		return errShardNotBootstrappedToFlush
 	}
 	s.RUnlock()
