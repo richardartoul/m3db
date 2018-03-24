@@ -1699,7 +1699,6 @@ func (s *dbShard) markDoneSnapshotting(success bool, completionTime time.Time) {
 	s.snapshotState.Unlock()
 }
 
-// TODO(rartoul): Move into cleanup manager
 func (s *dbShard) CleanupSnapshots() error {
 	filePathPrefix := s.opts.CommitLogOptions().FilesystemOptions().FilePathPrefix()
 	multiErr := xerrors.NewMultiError()
@@ -1727,7 +1726,6 @@ func (s *dbShard) CleanupSnapshots() error {
 	return multiErr.Add(err).FinalError()
 }
 
-// TODO(rartoul): Move into cleanup manager
 func (s *dbShard) CleanupFileset(earliestToRetain time.Time) error {
 	filePathPrefix := s.opts.CommitLogOptions().FilesystemOptions().FilePathPrefix()
 	multiErr := xerrors.NewMultiError()
