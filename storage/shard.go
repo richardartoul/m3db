@@ -77,6 +77,8 @@ type filesetBeforeFn func(
 	t time.Time,
 ) ([]string, error)
 
+type snapshotFilesFn func(filePathPrefix string, namespace ident.ID, shard uint32) (fs.SnapshotFilesSlice, error)
+
 type tickPolicy int
 
 const (
@@ -112,6 +114,7 @@ type dbShard struct {
 	bs                       bootstrapState
 	filesetBeforeFn          filesetBeforeFn
 	deleteFilesFn            deleteFilesFn
+	snapshotFilesFn          snapshotFilesFn
 	sleepFn                  func(time.Duration)
 	identifierPool           ident.Pool
 	contextPool              context.Pool
@@ -236,6 +239,7 @@ func newDatabaseShard(
 		list:               list.New(),
 		filesetBeforeFn:    fs.FilesetBefore,
 		deleteFilesFn:      fs.DeleteFiles,
+		snapshotFilesFn:    fs.SnapshotFiles,
 		sleepFn:            time.Sleep,
 		identifierPool:     opts.IdentifierPool(),
 		contextPool:        opts.ContextPool(),
@@ -1712,7 +1716,7 @@ func (s *dbShard) markDoneSnapshotting(success bool, completionTime time.Time) {
 func (s *dbShard) CleanupSnapshots(earliestToRetain time.Time) error {
 	filePathPrefix := s.opts.CommitLogOptions().FilesystemOptions().FilePathPrefix()
 	multiErr := xerrors.NewMultiError()
-	snapshotFiles, err := fs.SnapshotFiles(filePathPrefix, s.namespace.ID(), s.ID())
+	snapshotFiles, err := s.snapshotFilesFn(filePathPrefix, s.namespace.ID(), s.ID())
 	if err != nil {
 		return err
 	}
@@ -1756,7 +1760,7 @@ func (s *dbShard) CleanupSnapshots(earliestToRetain time.Time) error {
 		}
 	}
 
-	err = fs.DeleteFiles(filesToDelete)
+	err = s.deleteFilesFn(filesToDelete)
 	return multiErr.Add(err).FinalError()
 }
 
