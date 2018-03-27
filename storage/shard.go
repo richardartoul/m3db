@@ -1593,7 +1593,7 @@ func (s *dbShard) Snapshot(
 		Shard:             s.ID(),
 		BlockStart:        blockStart,
 		SnapshotTime:      snapshotTime,
-		IsSnapshot:        true,
+		FilesetType:       persist.FilesetSnapshotType,
 	}
 	prepared, err := flush.Prepare(prepareOpts)
 	multiErr = multiErr.Add(err)
