@@ -26,7 +26,6 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -1717,13 +1716,13 @@ func (s *dbShard) CleanupSnapshots(earliestToRetain time.Time) error {
 		return err
 	}
 
-	sort.Slice(snapshotFiles, func(i, j int) bool {
-		// Make sure they're sorted by blockStart/Index in ascending order.
-		if snapshotFiles[i].BlockStart.Equal(snapshotFiles[j].BlockStart) {
-			return snapshotFiles[i].Index < snapshotFiles[j].Index
-		}
-		return snapshotFiles[i].BlockStart.Before(snapshotFiles[j].BlockStart)
-	})
+	// sort.Slice(snapshotFiles, func(i, j int) bool {
+	// 	// Make sure they're sorted by blockStart/Index in ascending order.
+	// 	if snapshotFiles[i].BlockStart.Equal(snapshotFiles[j].BlockStart) {
+	// 		return snapshotFiles[i].Index < snapshotFiles[j].Index
+	// 	}
+	// 	return snapshotFiles[i].BlockStart.Before(snapshotFiles[j].BlockStart)
+	// })
 
 	filesToDelete := []string{}
 
@@ -1733,14 +1732,14 @@ func (s *dbShard) CleanupSnapshots(earliestToRetain time.Time) error {
 		if curr.BlockStart.Before(earliestToRetain) {
 			// Delete snapshot files for blocks that have fallen out
 			// of retention.
-			filesToDelete = append(filesToDelete, curr.Files...)
+			filesToDelete = append(filesToDelete, curr.AbsoluteFilepaths...)
 			continue
 		}
 
 		if s.FlushState(curr.BlockStart).Status == fileOpSuccess {
 			// Delete snapshot files for any block starts that have been
 			// successfully flushed.
-			filesToDelete = append(filesToDelete, curr.Files...)
+			filesToDelete = append(filesToDelete, curr.AbsoluteFilepaths...)
 			continue
 		}
 
@@ -1751,7 +1750,7 @@ func (s *dbShard) CleanupSnapshots(earliestToRetain time.Time) error {
 			// Delete any snapshot files which are not the most recent
 			// for that block start, but only of the set of snapshot files
 			// with the higher index is complete (checkpoint file exists)
-			filesToDelete = append(filesToDelete, curr.Files...)
+			filesToDelete = append(filesToDelete, curr.AbsoluteFilepaths...)
 			continue
 		}
 	}
