@@ -30,10 +30,10 @@ import (
 	"github.com/m3db/m3db/persist"
 	"github.com/m3db/m3db/storage/block"
 	"github.com/m3db/m3db/ts"
+	"github.com/m3db/m3db/x/xio"
 	"github.com/m3db/m3x/context"
 	"github.com/m3db/m3x/ident"
 	time0 "github.com/m3db/m3x/time"
-	"github.com/m3db/m3db/x/xio"
 
 	"github.com/golang/mock/gomock"
 )
