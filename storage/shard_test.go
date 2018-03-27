@@ -172,7 +172,6 @@ func TestShardFlushNoPersistFuncNoError(t *testing.T) {
 		NsMetadata: s.namespace,
 		Shard:      s.shard,
 		BlockStart: blockStart,
-		WrittenAt:  blockStart,
 	}
 	flush.EXPECT().Prepare(prepareOpts).Return(prepared, nil)
 
@@ -205,7 +204,6 @@ func TestShardFlushNoPersistFuncWithError(t *testing.T) {
 		NsMetadata: s.namespace,
 		Shard:      s.shard,
 		BlockStart: blockStart,
-		WrittenAt:  blockStart,
 	}
 	flush.EXPECT().Prepare(prepareOpts).Return(prepared, expectedErr)
 
@@ -245,7 +243,6 @@ func TestShardFlushSeriesFlushError(t *testing.T) {
 		NsMetadata: s.namespace,
 		Shard:      s.shard,
 		BlockStart: blockStart,
-		WrittenAt:  blockStart,
 	}
 	flush.EXPECT().Prepare(prepareOpts).Return(prepared, expectedErr)
 
@@ -312,7 +309,6 @@ func TestShardFlushSeriesFlushSuccess(t *testing.T) {
 		NsMetadata: s.namespace,
 		Shard:      s.shard,
 		BlockStart: blockStart,
-		WrittenAt:  blockStart,
 	}
 	flush.EXPECT().Prepare(prepareOpts).Return(prepared, nil)
 
@@ -382,10 +378,10 @@ func TestShardSnapshotSeriesSnapshotSuccess(t *testing.T) {
 	}
 
 	prepareOpts := persist.PrepareOptionsMatcher{
-		NsMetadata: s.namespace,
-		Shard:      s.shard,
-		BlockStart: blockStart,
-		WrittenAt:  blockStart,
+		NsMetadata:   s.namespace,
+		Shard:        s.shard,
+		BlockStart:   blockStart,
+		SnapshotTime: blockStart,
 	}
 	flush.EXPECT().Prepare(prepareOpts).Return(prepared, nil)
 

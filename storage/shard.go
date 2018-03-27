@@ -1540,7 +1540,6 @@ func (s *dbShard) Flush(
 		NsMetadata: s.namespace,
 		Shard:      s.ID(),
 		BlockStart: blockStart,
-		WrittenAt:  blockStart,
 	}
 	prepared, err := flush.Prepare(prepareOpts)
 	multiErr = multiErr.Add(err)
@@ -1574,7 +1573,7 @@ func (s *dbShard) Flush(
 
 func (s *dbShard) Snapshot(
 	blockStart time.Time,
-	snapshotStart time.Time,
+	snapshotTime time.Time,
 	flush persist.Flush,
 ) error {
 	// We don't snapshot data when the shard is still bootstrapping
@@ -1589,15 +1588,15 @@ func (s *dbShard) Snapshot(
 
 	s.markIsSnapshotting()
 	defer func() {
-		s.markDoneSnapshotting(multiErr.FinalError() == nil, snapshotStart)
+		s.markDoneSnapshotting(multiErr.FinalError() == nil, snapshotTime)
 	}()
 
 	prepareOpts := persist.PrepareOptions{
-		NsMetadata: s.namespace,
-		Shard:      s.ID(),
-		BlockStart: blockStart,
-		WrittenAt:  snapshotStart,
-		IsSnapshot: true,
+		NsMetadata:   s.namespace,
+		Shard:        s.ID(),
+		BlockStart:   blockStart,
+		SnapshotTime: snapshotTime,
+		IsSnapshot:   true,
 	}
 	prepared, err := flush.Prepare(prepareOpts)
 	multiErr = multiErr.Add(err)
@@ -1608,7 +1607,7 @@ func (s *dbShard) Snapshot(
 		// exists.
 		s.logger.WithFields(
 			xlog.NewField("blockStart", blockStart),
-			xlog.NewField("snapshotStart", snapshotStart),
+			xlog.NewField("snapshotStart", snapshotTime),
 			xlog.NewField("shard", s.ID()),
 		).Errorf("Tried to write prepare snapshot file that already exists")
 		return nil
