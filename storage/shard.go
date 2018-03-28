@@ -1497,11 +1497,12 @@ func (s *dbShard) Bootstrap(
 		fsOpts.InfoReaderBufferSize(), fsOpts.DecodingOptions())
 
 	for _, result := range readInfoFilesResults {
-		if result.Err != nil {
+		if result.Err.Error() != nil {
 			s.logger.WithFields(
 				xlog.NewField("shard", s.ID()),
 				xlog.NewField("namespace", s.namespace.ID()),
 				xlog.NewField("error", result.Err.Error()),
+				xlog.NewField("filepath", result.Err.Filepath()),
 			).Error("unable to read info files in shard bootstrap")
 			continue
 		}
